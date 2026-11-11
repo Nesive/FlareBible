@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Nesive Bible favicon: open Bible book with a cross, radar theme -->
+  <rect x="0" y="0" width="64" height="64" rx="14" fill="#050807"/>
+  <!-- open book: two pages -->
+  <path d="M32 20 C26 15 17 14 10 16 L10 46 C17 44 26 45 32 50 C38 45 47 44 54 46 L54 16 C47 14 38 15 32 20 Z" fill="#CDF463"/>
+  <!-- center spine shadow -->
+  <path d="M32 20 L32 50 C26 45 17 44 10 46 L10 16 C17 14 26 15 32 20 Z" fill="#050807" opacity="0.18"/>
+  <!-- page lines -->
+  <path d="M14 22 C19 21 24 21.5 28 24 M14 28 C19 27 24 27.5 28 30 M14 34 C19 33 24 33.5 28 36" stroke="#050807" stroke-width="1.6" stroke-linecap="round" fill="none" opacity="0.55"/>
+  <path d="M50 22 C45 21 40 21.5 36 24 M50 28 C45 27 40 27.5 36 30 M50 34 C45 33 40 33.5 36 36" stroke="#050807" stroke-width="1.6" stroke-linecap="round" fill="none" opacity="0.55"/>
+  <!-- cross above the book -->
+  <g fill="#CDF463">
+    <rect x="30" y="4" width="4" height="12" rx="1"/>
+    <rect x="26" y="8" width="12" height="4" rx="1"/>
+  </g>
+</svg>

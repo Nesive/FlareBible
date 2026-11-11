@@ -1,0 +1,14 @@
+# FlareBible — one-click deploy configuration (Cloudflare Pages, static site).
+#
+# No build step, no backend, no secrets. The site is pure HTML/CSS/JS and
+# the translation data is bundled in data/. ESV is fetched at runtime from
+# the official Crossway API with a key the reader enters in Settings.
+#
+# Deploy from the dashboard: Workers & Pages -> Create -> Pages ->
+# Connect to Git -> pick this repo -> Framework preset: None ->
+# Build output directory: (leave empty = repo root) -> Deploy.
+# Or run: wrangler pages deploy . --project-name flarebible
+
+name = "flarebible"
+compatibility_date = "2026-11-11"
+pages_build_output_dir = "."

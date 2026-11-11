@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>FlareBible | 在线圣经</title>
+<meta name="description" content="FlareBible 在线阅读圣经：和合本、KJV、当代译本、吕振中、ESV，全文搜索、书签、高亮、笔记、读经计划。">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="icon" type="image/png" sizes="64x64" href="favicon.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#/" aria-label="首页">
+    <span class="brand-mark"><svg viewBox="0 0 64 64" width="22" height="22" aria-hidden="true"><path d="M32 20 C26 15 17 14 10 16 L10 46 C17 44 26 45 32 50 C38 45 47 44 54 46 L54 16 C47 14 38 15 32 20 Z" fill="currentColor"/><path d="M32 20 L32 50 C26 45 17 44 10 46 L10 16 C17 14 26 15 32 20 Z" fill="#000" opacity="0.18"/><g fill="currentColor"><rect x="30" y="4" width="4" height="12" rx="1"/><rect x="26" y="8" width="12" height="4" rx="1"/></g></svg></span>
+    <span class="brand-name">FlareBible</span>
+    <span class="brand-sub">在线圣经</span>
+  </a>
+  <div class="top-actions">
+    <button id="btn-search-top" class="icon-btn" aria-label="搜索" title="搜索">⌕</button>
+    <button id="btn-theme" class="icon-btn" aria-label="切换主题" title="切换主题">◐</button>
+    <button id="btn-settings" class="icon-btn" aria-label="设置" title="设置">⚙</button>
+  </div>
+</header>
+
+<main id="app" class="app">
+  <!-- Home -->
+  <section id="view-home" class="view">
+    <div class="home-hero">
+      <div class="home-hero-label">每日金句 · <span id="daily-date"></span></div>
+      <p class="daily-verse" id="daily-verse-text"></p>
+      <p class="daily-verse-ref" id="daily-verse-ref"></p>
+      <div class="home-hero-actions">
+        <button class="btn-primary" id="btn-continue">继续阅读</button>
+        <button class="btn-ghost" id="btn-daily-read">读这一章</button>
+      </div>
+    </div>
+    <div class="home-section">
+      <h2>旧约 <span class="count">39 卷</span></h2>
+      <div class="book-grid" id="grid-ot"></div>
+    </div>
+    <div class="home-section">
+      <h2>新约 <span class="count">27 卷</span></h2>
+      <div class="book-grid" id="grid-nt"></div>
+    </div>
+    <p class="copyright">和合本 © 1995 Hong Kong Bible Society · KJV（公有领域）· 当代译本 © Biblica（CC BY-SA 4.0）· 吕振中译本（公有领域）</p>
+  </section>
+
+  <!-- Reader -->
+  <section id="view-read" class="view hidden">
+    <div class="reader-bar">
+      <button class="reader-nav" id="btn-picker" aria-label="选书选章">
+        <span id="reader-book">创世记</span>
+        <span id="reader-chapter">第 1 章</span>
+        <span class="caret">▾</span>
+      </button>
+      <button class="reader-version" id="btn-version" aria-label="切换译本">和合本</button>
+    </div>
+    <article class="reader" id="reader">
+      <h1 class="reader-title" id="reader-title"></h1>
+      <div class="reader-meta" id="reader-meta"></div>
+      <div class="verses" id="verses"></div>
+      <div class="reader-pager">
+        <button class="btn-ghost" id="btn-prev">← 上一章</button>
+        <button class="btn-ghost" id="btn-next">下一章 →</button>
+      </div>
+      <p class="copyright" id="reader-copyright"></p>
+    </article>
+  </section>
+
+  <!-- Verse detail -->
+  <section id="view-verse" class="view hidden">
+    <div class="reader-bar">
+      <button class="reader-nav" id="verse-back">← 返回</button>
+      <span class="reader-version" id="verse-ref-label"></span>
+    </div>
+    <article class="reader">
+      <h1 class="reader-title" id="verse-title"></h1>
+      <div id="verse-body"></div>
+      <div class="verse-actions">
+        <button class="btn-primary" id="verse-copy">复制经文</button>
+        <button class="btn-ghost" id="verse-share">分享</button>
+        <button class="btn-ghost" id="verse-bookmark">书签</button>
+        <button class="btn-ghost" id="verse-note">笔记</button>
+      </div>
+      <div class="verse-highlight-row" id="verse-highlight-row">
+        <span>高亮：</span>
+        <button class="hl-dot hl-yellow" data-hl="yellow" aria-label="黄色高亮"></button>
+        <button class="hl-dot hl-green" data-hl="green" aria-label="绿色高亮"></button>
+        <button class="hl-dot hl-blue" data-hl="blue" aria-label="蓝色高亮"></button>
+        <button class="hl-dot hl-pink" data-hl="pink" aria-label="粉色高亮"></button>
+        <button class="hl-dot hl-clear" data-hl="" aria-label="清除高亮">✕</button>
+      </div>
+      <div class="verse-note-box hidden" id="verse-note-box">
+        <textarea id="verse-note-text" rows="3" placeholder="写下你的笔记…"></textarea>
+        <button class="btn-primary" id="verse-note-save">保存笔记</button>
+      </div>
+      <div id="verse-note-view" class="verse-note-view hidden"></div>
+    </article>
+  </section>
+
+  <!-- Search -->
+  <section id="view-search" class="view hidden">
+    <div class="search-box">
+      <input id="search-input" type="search" placeholder="搜索经文，如：爱、信靠，或输入出处如 约3:16" autocomplete="off">
+      <button class="btn-primary" id="search-go">搜索</button>
+    </div>
+    <p class="search-hint">支持关键词搜索与经文出处直达（例：创1:1、约3:16、诗23:1）。</p>
+    <div id="search-results" class="search-results"></div>
+  </section>
+
+  <!-- Bookmarks -->
+  <section id="view-bookmarks" class="view hidden">
+    <div class="tabs" id="bm-tabs">
+      <button data-tab="bookmarks" class="active">书签</button>
+      <button data-tab="highlights">高亮</button>
+      <button data-tab="notes">笔记</button>
+      <button data-tab="history">最近读过</button>
+    </div>
+    <div id="bm-list" class="bm-list"></div>
+  </section>
+
+  <!-- Plan -->
+  <section id="view-plan" class="view hidden">
+    <div class="plan-head">
+      <h1>一年读经计划</h1>
+      <p>每天读三段：旧约、新约、诗篇/箴言，一年读完圣经。</p>
+      <div class="plan-progress">
+        <div class="plan-progress-bar"><div id="plan-bar" style="width:0%"></div></div>
+        <span id="plan-count">已完成 0 / 365 天</span>
+      </div>
+    </div>
+    <div class="plan-today">
+      <span>今天 · <span id="plan-today-date"></span></span>
+      <button class="btn-primary" id="plan-today-go">读今日经文</button>
+    </div>
+    <div id="plan-list" class="plan-list"></div>
+  </section>
+</main>
+
+<nav class="bottomnav" aria-label="主导航">
+  <a href="#/" data-nav="home"><span class="nav-ico">⌂</span><span>首页</span></a>
+  <a href="#/read" data-nav="read"><span class="nav-ico"><svg viewBox="0 0 64 64" width="20" height="20" aria-hidden="true"><path d="M32 20 C26 15 17 14 10 16 L10 46 C17 44 26 45 32 50 C38 45 47 44 54 46 L54 16 C47 14 38 15 32 20 Z" fill="currentColor"/><path d="M32 20 L32 50 C26 45 17 44 10 46 L10 16 C17 14 26 15 32 20 Z" fill="#000" opacity="0.18"/><g fill="currentColor"><rect x="30" y="4" width="4" height="12" rx="1"/><rect x="26" y="8" width="12" height="4" rx="1"/></g></svg></span><span>圣经</span></a>
+  <a href="#/search" data-nav="search"><span class="nav-ico">⌕</span><span>搜索</span></a>
+  <a href="#/bookmarks" data-nav="bookmarks"><span class="nav-ico">🔖</span><span>书签</span></a>
+  <a href="#/plan" data-nav="plan"><span class="nav-ico">☰</span><span>计划</span></a>
+</nav>
+
+<!-- Book / chapter picker drawer -->
+<div class="drawer-backdrop hidden" id="drawer-backdrop"></div>
+<aside class="drawer hidden" id="drawer-picker" aria-label="选书选章">
+  <div class="drawer-head">
+    <h2>选书选章</h2>
+    <button class="icon-btn" id="drawer-close" aria-label="关闭">✕</button>
+  </div>
+  <div class="tabs" id="picker-tabs">
+    <button data-t="OT" class="active">旧约</button>
+    <button data-t="NT">新约</button>
+  </div>
+  <div class="picker-books" id="picker-books"></div>
+  <div class="picker-chapters hidden" id="picker-chapters">
+    <button class="btn-ghost" id="picker-back">← 全部书卷</button>
+    <h3 id="picker-book-name"></h3>
+    <div class="chapter-grid" id="picker-chapter-grid"></div>
+  </div>
+</aside>
+
+<!-- Version drawer -->
+<aside class="drawer hidden" id="drawer-version" aria-label="切换译本">
+  <div class="drawer-head">
+    <h2>译本</h2>
+    <button class="icon-btn" id="version-close" aria-label="关闭">✕</button>
+  </div>
+  <div class="version-list" id="version-list">
+    <button class="version-item" data-v="cuv">
+      <strong>和合本</strong><span>中文 · 新标点和合本（简体）</span>
+    </button>
+    <button class="version-item" data-v="ccb">
+      <strong>当代译本</strong><span>中文 · 当代译本（简体）· Biblica 开放资源</span>
+    </button>
+    <button class="version-item" data-v="lzz">
+      <strong>吕振中</strong><span>中文 · 吕振中译本（简体）· 直译原文结构</span>
+    </button>
+    <button class="version-item" data-v="kjv">
+      <strong>King James Version</strong><span>English · KJV（公有领域）</span>
+    </button>
+    <button class="version-item" data-v="esv">
+      <strong>English Standard Version</strong><span>English · ESV · 需免费 API 密钥（Crossway）</span>
+    </button>
+    <button class="version-item" data-v="parallel">
+      <strong>对照阅读</strong><span>和合本 + KJV 并排对照</span>
+    </button>
+  </div>
+  <p class="drawer-note">译本说明：和合本、KJV、吕振中为公有领域；当代译本为 Biblica 开放资源（CC BY-SA 4.0）；ESV 由 Crossway 官方 API 实时提供，需在设置里填入免费密钥，本站不存储 ESV 全文。微读圣经另有新译本、和合本 2010 等版权译本，本站未收录。</p>
+</aside>
+
+<!-- Settings drawer -->
+<aside class="drawer hidden" id="drawer-settings" aria-label="设置">
+  <div class="drawer-head">
+    <h2>阅读设置</h2>
+    <button class="icon-btn" id="settings-close" aria-label="关闭">✕</button>
+  </div>
+  <div class="setting-row">
+    <label>字号</label>
+    <div class="seg" id="seg-font">
+      <button data-f="small">小</button>
+      <button data-f="medium" class="active">中</button>
+      <button data-f="large">大</button>
+      <button data-f="xlarge">特大</button>
+    </div>
+  </div>
+  <div class="setting-row">
+    <label>行距</label>
+    <div class="seg" id="seg-line">
+      <button data-l="tight">紧凑</button>
+      <button data-l="normal" class="active">适中</button>
+      <button data-l="loose">宽松</button>
+    </div>
+  </div>
+  <label class="setting-check"><input type="checkbox" id="set-versenums" checked> 显示节号</label>
+  <label class="setting-check"><input type="checkbox" id="set-headings" checked> 显示段落标题</label>
+  <label class="setting-check"><input type="checkbox" id="set-poetry" checked> 诗歌体分行</label>
+  <div class="setting-row">
+    <label>复制格式</label>
+    <div class="seg" id="seg-copyfmt">
+      <button data-cf="numbered" class="active">编号分段</button>
+      <button data-cf="inline">句末出处</button>
+      <button data-cf="plain">纯经文</button>
+    </div>
+  </div>
+  <p class="drawer-note">句末出处例：这样人们就知道我是耶和华（以西结书 28:20 和合本）。复制格式对单节与多节复制都生效。</p>
+  <div class="setting-row setting-backup">
+    <label>我的数据</label>
+    <div class="backup-btns">
+      <button class="btn-ghost" id="btn-export">导出备份</button>
+      <button class="btn-ghost" id="btn-import">导入备份</button>
+      <input type="file" id="import-file" accept="application/json,.json" hidden>
+    </div>
+  </div>
+  <p class="drawer-note">书签、高亮、笔记与阅读记录保存在本机浏览器。导出备份为 JSON 文件，可在换设备或清数据后导入恢复。</p>
+  <div class="setting-row setting-esv">
+    <label for="set-esv-token">ESV API 密钥</label>
+    <input id="set-esv-token" type="password" placeholder="粘贴 Crossway 免费密钥" autocomplete="off" spellcheck="false">
+  </div>
+  <p class="drawer-note">ESV 密钥免费获取：到 <a href="https://api.esv.org/" target="_blank" rel="noopener">api.esv.org</a> 注册账号并创建 API 应用，密钥只保存在本机浏览器，不上传。填入后即可在线阅读 ESV。</p>
+</aside>
+
+<!-- Verse action sheet -->
+<div class="sheet-backdrop hidden" id="sheet-backdrop"></div>
+<div class="sheet hidden" id="sheet-verse" role="dialog" aria-label="经文操作">
+  <p class="sheet-ref" id="sheet-ref"></p>
+  <p class="sheet-text" id="sheet-text"></p>
+  <div class="sheet-grid">
+    <button id="sheet-copy">复制</button>
+    <button id="sheet-share">分享</button>
+    <button id="sheet-open">逐节对照</button>
+    <button id="sheet-bookmark">书签</button>
+    <button id="sheet-note">笔记</button>
+    <button id="sheet-close">关闭</button>
+  </div>
+  <div class="sheet-hl">
+    <span>高亮</span>
+    <button class="hl-dot hl-yellow" data-hl="yellow" aria-label="黄色"></button>
+    <button class="hl-dot hl-green" data-hl="green" aria-label="绿色"></button>
+    <button class="hl-dot hl-blue" data-hl="blue" aria-label="蓝色"></button>
+    <button class="hl-dot hl-pink" data-hl="pink" aria-label="粉色"></button>
+    <button class="hl-dot hl-clear" data-hl="" aria-label="清除">✕</button>
+  </div>
+</div>
+
+<div class="toast hidden" id="toast"></div>
+<div class="selbar hidden" id="selbar" role="toolbar" aria-label="经文操作">
+  <div class="selbar-row">
+    <span class="selbar-count" id="selbar-count">已选 0 节</span>
+    <button class="btn-primary" id="selbar-copy">复制</button>
+    <button class="btn-ghost" id="selbar-share">分享</button>
+    <button class="btn-ghost" id="selbar-highlight">高亮</button>
+    <button class="btn-ghost" id="selbar-bookmark">书签</button>
+    <button class="btn-ghost" id="selbar-note">笔记</button>
+    <button class="btn-ghost" id="selbar-cancel">取消</button>
+  </div>
+  <div class="selbar-row selbar-colors hidden" id="selbar-colors">
+    <span>高亮颜色：</span>
+    <button class="hl-dot hl-yellow" data-hl="yellow" aria-label="黄色"></button>
+    <button class="hl-dot hl-green" data-hl="green" aria-label="绿色"></button>
+    <button class="hl-dot hl-blue" data-hl="blue" aria-label="蓝色"></button>
+    <button class="hl-dot hl-pink" data-hl="pink" aria-label="粉色"></button>
+    <button class="hl-dot hl-clear" data-hl="" aria-label="清除">✕</button>
+  </div>
+  <div class="selbar-row selbar-note hidden" id="selbar-note-row">
+    <input id="selbar-note-input" type="text" placeholder="给选中的经文写一句笔记…" maxlength="500">
+    <button class="btn-primary" id="selbar-note-save">保存</button>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
