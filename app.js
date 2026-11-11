@@ -5,12 +5,111 @@ const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 
 /* ---------- state ---------- */
+/* ---------- profiles: one local profile per person, no account ---------- */
+// Personal data (bookmarks, highlights, notes, reading progress, ESV key) is
+// stored per profile under "nb:p:<profileId>:<key>"; display settings stay
+// global under "nb:<key>". Switching profiles reloads the page so every view
+// re-reads the new profile's data. The first run after this feature migrates
+// any legacy un-profiled data into the default profile ("我") so nothing is lost.
+const PERSONAL_KEYS = new Set(["bookmarks", "highlights", "notes", "history", "lastRead", "plan", "planDone", "esvToken", "typingProgress", "typingBest", "typingMistakes", "typingStats"]);
+let profiles = [];
+let currentProfileId = "default";
+function profileKey(k) {
+  return PERSONAL_KEYS.has(k) ? "p:" + currentProfileId + ":" + k : k;
+}
 const store = {
-  get(k, d) { try { const v = localStorage.getItem("nb:" + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
-  set(k, v) { try { localStorage.setItem("nb:" + k, JSON.stringify(v)); } catch (e) {} },
+  get(k, d) { try { const v = localStorage.getItem("nb:" + profileKey(k)); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("nb:" + profileKey(k), JSON.stringify(v)); } catch (e) {} },
+  getRaw(k, d) { try { const v = localStorage.getItem("nb:" + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  setRaw(k, v) { try { localStorage.setItem("nb:" + k, JSON.stringify(v)); } catch (e) {} },
+  removeRaw(k) { try { localStorage.removeItem("nb:" + k); } catch (e) {} },
 };
+function initProfiles() {
+  profiles = store.getRaw("profiles", null);
+  currentProfileId = store.getRaw("profile", null);
+  if (!profiles || !Array.isArray(profiles) || profiles.length === 0) {
+    const legacy = {};
+    let hasLegacy = false;
+    PERSONAL_KEYS.forEach((k) => {
+      const v = store.getRaw(k, undefined);
+      if (v !== undefined) { legacy[k] = v; hasLegacy = true; }
+    });
+    profiles = [{ id: "default", name: "我", createdAt: Date.now() }];
+    currentProfileId = "default";
+    store.setRaw("profiles", profiles);
+    store.setRaw("profile", currentProfileId);
+    if (hasLegacy) {
+      Object.keys(legacy).forEach((k) => { store.set(k, legacy[k]); store.removeRaw(k); });
+    }
+  } else if (!profiles.some((p) => p.id === currentProfileId)) {
+    currentProfileId = profiles[0].id;
+    store.setRaw("profile", currentProfileId);
+  }
+}
+initProfiles();
+function currentProfile() { return profiles.find((p) => p.id === currentProfileId) || profiles[0]; }
+function switchProfile(id) {
+  if (id === currentProfileId || !profiles.some((p) => p.id === id)) return;
+  currentProfileId = id;
+  store.setRaw("profile", id);
+  location.reload();
+}
+function addProfile(name) {
+  name = (name || "").trim();
+  if (!name) return null;
+  const id = "p" + Date.now().toString(36);
+  profiles.push({ id, name, createdAt: Date.now() });
+  store.setRaw("profiles", profiles);
+  return id;
+}
+function renameProfile(id, name) {
+  name = (name || "").trim();
+  if (!name) return;
+  const p = profiles.find((x) => x.id === id);
+  if (!p) return;
+  p.name = name;
+  store.setRaw("profiles", profiles);
+}
+function deleteProfile(id) {
+  if (profiles.length <= 1) { toast("至少保留一个档案"); return false; }
+  const p = profiles.find((x) => x.id === id);
+  if (!p) return false;
+  PERSONAL_KEYS.forEach((k) => store.removeRaw("p:" + id + ":" + k));
+  profiles = profiles.filter((x) => x.id !== id);
+  store.setRaw("profiles", profiles);
+  if (id === currentProfileId) {
+    currentProfileId = profiles[0].id;
+    store.setRaw("profile", currentProfileId);
+    location.reload();
+  }
+  return true;
+}
+function renderProfiles() {
+  const list = $("#profile-list");
+  if (!list) return;
+  list.innerHTML = profiles.map((p) => (
+    `<div class="profile-row${p.id === currentProfileId ? " active" : ""}">` +
+    `<button class="profile-name" data-pid="${p.id}" title="切换到此档案">${esc(p.name)}</button>` +
+    `<button class="profile-rename" data-pid="${p.id}" title="改名">✎</button>` +
+    `<button class="profile-del" data-pid="${p.id}" title="删除档案">✕</button></div>`
+  )).join("");
+  list.querySelectorAll(".profile-name").forEach((b) => b.addEventListener("click", () => switchProfile(b.dataset.pid)));
+  list.querySelectorAll(".profile-rename").forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const p = profiles.find((x) => x.id === b.dataset.pid);
+    const name = prompt("档案改名", p ? p.name : "");
+    if (name !== null) { renameProfile(b.dataset.pid, name); renderProfiles(); }
+  }));
+  list.querySelectorAll(".profile-del").forEach((b) => b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const p = profiles.find((x) => x.id === b.dataset.pid);
+    if (!p) return;
+    if (!confirm("删除档案「" + p.name + "」？它名下的书签、高亮、笔记与阅读记录都会一并删除。")) return;
+    if (deleteProfile(b.dataset.pid)) renderProfiles();
+  }));
+}
 const settings = Object.assign(
-  { theme: "dark", version: "cuv", font: "medium", line: "normal", showNums: true, showHeadings: true, poetry: true, copyFormat: "numbered" },
+  { theme: "dark", version: "cuv", font: "medium", line: "normal", showNums: true, showHeadings: true, poetry: true, copyFormat: "numbered", readingMode: "scroll", original: false },
   store.get("settings", {})
 );
 let books = null;            // index.json
@@ -22,18 +121,42 @@ let currentVerses = [];      // verse texts of the chapter currently displayed
 let currentHeadings = null;  // per-book headings of the current chapter's book (CCB)
 
 /* ---------- versions ---------- */
-// id -> {label, dir, copyright, api?}
+// id -> {label, dir, copyright, api?, lang}
 const VERSIONS = {
-  cuv: { label: "和合本", dir: "data/books/", note: "中文 · 新标点和合本（简体）",
+  cuv: { label: "和合本", dir: "data/books/", note: "中文 · 新标点和合本（简体）", lang: "zh",
          copyright: "和合本 © 1995 Hong Kong Bible Society" },
-  kjv: { label: "KJV", dir: "data/books-en/", note: "English · King James Version",
+  kjv: { label: "KJV", dir: "data/books-en/", note: "English · King James Version", lang: "en",
          copyright: "King James Version（公有领域）" },
-  ccb: { label: "当代译本", dir: "data/books-ccb/", note: "中文 · 当代译本（简体）",
+  ccb: { label: "当代译本", dir: "data/books-ccb/", note: "中文 · 当代译本（简体）", lang: "zh",
          copyright: "当代译本 © 1979, 2005, 2007, 2011, 2022 Biblica, Inc.（CC BY-SA 4.0 开放资源）" },
-  lzz: { label: "吕振中", dir: "data/books-lzz/", note: "中文 · 吕振中译本（简体）",
+  lzz: { label: "吕振中", dir: "data/books-lzz/", note: "中文 · 吕振中译本（简体）", lang: "zh",
          copyright: "吕振中译本（1970，著作权保护期已满）" },
-  esv: { label: "ESV", dir: null, note: "English · English Standard Version",
+  esv: { label: "ESV", dir: null, note: "English · English Standard Version", lang: "en",
          copyright: "Scripture quotations are from the ESV® Bible (The Holy Bible, English Standard Version®), © 2001 by Crossway. Used by permission. All rights reserved." },
+  wenli: { label: "文理和合本", dir: "data/books-wenli/", note: "中文 · 文理和合本 1919（文言）", lang: "zh",
+         copyright: "文理和合本 1919（公有领域）" },
+  asv: { label: "ASV 1901", dir: "data/books-asv/", note: "English · American Standard Version 1901", lang: "en",
+         copyright: "American Standard Version 1901（公有领域）" },
+  web: { label: "WEB", dir: "data/books-web/", note: "English · World English Bible", lang: "en",
+         copyright: "World English Bible（公有领域）" },
+  ylt: { label: "YLT 1898", dir: "data/books-ylt/", note: "English · Young's Literal Translation 1898", lang: "en",
+         copyright: "Young's Literal Translation 1898（公有领域）" },
+  darby: { label: "Darby 1890", dir: "data/books-darby/", note: "English · Darby Translation 1890", lang: "en",
+         copyright: "Darby Translation 1890（公有领域）" },
+  geneva: { label: "Geneva 1599", dir: "data/books-geneva/", note: "English · Geneva Bible 1599", lang: "en",
+         copyright: "Geneva Bible 1599（公有领域）" },
+  bbe: { label: "BBE", dir: "data/books-bbe/", note: "English · Bible in Basic English", lang: "en",
+         copyright: "Bible in Basic English（美国公有领域）" },
+  luther1912: { label: "Luther 1912", dir: "data/books-luther1912/", note: "Deutsch · Lutherbibel 1912", lang: "de",
+         copyright: "Lutherbibel 1912（公有领域）" },
+  segond1910: { label: "Segond 1910", dir: "data/books-segond1910/", note: "Français · Louis Segond 1910", lang: "fr",
+         copyright: "Louis Segond 1910（公有领域）" },
+  rv1909: { label: "RV 1909", dir: "data/books-rv1909/", note: "Español · Reina-Valera 1909", lang: "es",
+         copyright: "Reina-Valera 1909（公有领域）" },
+  almeida: { label: "Almeida ARC", dir: "data/books-almeida/", note: "Português · Almeida Revista e Corrigida", lang: "pt",
+         copyright: "Almeida Revista e Corrigida（公有领域）" },
+  staten: { label: "Statenvertaling", dir: "data/books-staten/", note: "Nederlands · Statenvertaling 1637", lang: "nl",
+         copyright: "Statenvertaling 1637（公有领域）" },
 };
 const ESV_API = "https://api.esv.org/v3/passage/text/";
 
@@ -156,9 +279,12 @@ function applySettings() {
   $("#set-versenums").checked = settings.showNums;
   $("#set-headings").checked = settings.showHeadings;
   $("#set-poetry").checked = settings.poetry;
+  $("#set-original").checked = !!settings.original;
   $$("#seg-font button").forEach((b) => b.classList.toggle("active", b.dataset.f === settings.font));
   $$("#seg-line button").forEach((b) => b.classList.toggle("active", b.dataset.l === settings.line));
   $$("#seg-copyfmt button").forEach((b) => b.classList.toggle("active", b.dataset.cf === (settings.copyFormat || "numbered")));
+  $$("#seg-reading button").forEach((b) => b.classList.toggle("active", b.dataset.rm === (settings.readingMode || "scroll")));
+  document.body.classList.toggle("page-mode", settings.readingMode === "page");
   const v = $("#verses");
   v.classList.toggle("font-small", settings.font === "small");
   v.classList.toggle("font-large", settings.font === "large");
@@ -179,7 +305,7 @@ function versionCopyright() {
 }
 
 /* ---------- views / router ---------- */
-const views = ["home", "read", "verse", "search", "bookmarks", "plan"];
+const views = ["home", "read", "verse", "search", "bookmarks", "plan", "typing"];
 function showView(name) {
   views.forEach((v) => $("#view-" + v).classList.toggle("hidden", v !== name));
   $$(".bottomnav a").forEach((a) => a.classList.toggle("active", a.dataset.nav === name || (name === "verse" && a.dataset.nav === "read") || (name === "read" && a.dataset.nav === "read")));
@@ -187,7 +313,8 @@ function showView(name) {
 }
 function route() {
   const h = location.hash || "#/";
-  const parts = h.replace(/^#\/?/, "").split("/");
+  const [pathPart, queryPart] = h.replace(/^#\/?/, "").split("?");
+  const parts = pathPart.split("/");
   const page = parts[0] || "";
   if (page === "read") {
     const abbrev = parts[1] || current.book;
@@ -202,7 +329,7 @@ function route() {
     renderVerse(abbrev, ch, v);
   } else if (page === "search") {
     showView("search");
-    const q = new URLSearchParams(location.hash.split("?")[1] || "").get("q");
+    const q = new URLSearchParams(queryPart || "").get("q");
     if (q) { $("#search-input").value = q; doSearch(q); }
   } else if (page === "bookmarks") {
     showView("bookmarks");
@@ -210,6 +337,12 @@ function route() {
   } else if (page === "plan") {
     showView("plan");
     renderPlan();
+  } else if (page === "typing") {
+    showView("typing");
+    const q = new URLSearchParams(queryPart || "");
+    const tb = q.get("book"), tc = parseInt(q.get("chapter"), 10), tv = parseInt(q.get("verse"), 10);
+    if (tb && tc) renderTyping(tb, tc, tv || null);
+    else renderTypingHome();
   } else {
     showView("home");
     renderHome();
@@ -274,6 +407,8 @@ async function renderChapter(abbrev, chapter) {
   const book = bookByAbbrev(abbrev);
   if (!book) { location.hash = "#/read/gen/1"; return; }
   chapter = Math.max(1, Math.min(chapter, book.chapters));
+  // Same-chapter re-render (font / version / settings): keep the page position.
+  if (current.book === abbrev && current.chapter === chapter) rememberPageAnchor();
   // Navigating to a different chapter clears any verse selection.
   if (current.book !== abbrev || current.chapter !== chapter) {
     selSet.clear();
@@ -319,6 +454,7 @@ async function renderChapter(abbrev, chapter) {
     }
     $("#reader-copyright").textContent = versionCopyright();
     applySettings();
+    requestAnimationFrame(() => applyPageMode());
     return;
   }
   currentVerses = verses || [];
@@ -331,6 +467,10 @@ async function renderChapter(abbrev, chapter) {
   const hls = store.get("highlights", {});
   const notes = store.get("notes", {});
   const poetry = settings.poetry && isPoetryBook(abbrev);
+  let lexMap = null;
+  if (settings.original) {
+    try { lexMap = await loadLexiconBook(abbrev); } catch (e) { lexMap = null; }
+  }
   let html = "";
   verses.forEach((text, i) => {
     const vn = i + 1;
@@ -351,6 +491,15 @@ async function renderChapter(abbrev, chapter) {
     html += h + `<span class="${cls.join(" ")}" data-v="${vn}" data-key="${key}"><sup class="vn${settings.showNums ? "" : " hidden-num"}">${vn}</sup>${body}${noteDot}</span> `;
     if (parallel && versesEn && versesEn[i]) {
       html += `<span class="verse-en" data-v="${vn}">${esc(versesEn[i])}</span>`;
+    }
+    if (lexMap) {
+      const words = lexMap.get(chapter + ":" + vn);
+      if (words && words.length) {
+        const rtl = book.testament === "OT";
+        html += `<span class="orig-line" data-v="${vn}" dir="${rtl ? "rtl" : "ltr"}">` +
+          words.map((w, wi) => `<span class="oword" data-s="${w.s}" data-w="${wi}">${esc(w.t)}</span>`).join(" ") +
+          `</span>`;
+      }
     }
   });
   const vEl = $("#verses");
@@ -383,6 +532,7 @@ async function renderChapter(abbrev, chapter) {
   prevBtn.onclick = () => { if (prev) location.hash = "#/read/" + prev.book + "/" + prev.chapter; };
   nextBtn.onclick = () => { if (next) location.hash = "#/read/" + next.book + "/" + next.chapter; };
   $("#reader-copyright").textContent = versionCopyright();
+  requestAnimationFrame(() => { applyPageMode(); maybeHighlightLexTarget(); });
 }
 function prevChapter(abbrev, chapter) {
   if (chapter > 1) return { book: abbrev, chapter: chapter - 1 };
@@ -396,6 +546,472 @@ function nextChapter(abbrev, chapter) {
   const i = bookIndex(abbrev);
   if (i >= 0 && i < books.length - 1) return { book: books[i + 1].abbrev, chapter: 1 };
   return null;
+}
+
+/* ---------- page-turn mode (wd.bible style) ---------- */
+let pageState = { total: 0, index: 0, anchorVerse: null, pendingPage: null, _fadeTimer: null, _scrollTimer: null };
+function isPageMode() { return settings.readingMode === "page"; }
+function readViewVisible() { return !$("#view-read").classList.contains("hidden"); }
+function firstVerseOfPage(pg) {
+  if (!pg) return null;
+  const first = pg.querySelector(".verse");
+  return first ? parseInt(first.dataset.v, 10) : null;
+}
+function rememberPageAnchor() {
+  // keep the first verse of the current page across a re-pagination
+  const vEl = $("#verses");
+  if (!isPageMode() || !vEl.classList.contains("paged")) { pageState.anchorVerse = null; return; }
+  const pages = vEl.querySelectorAll(".page");
+  pageState.anchorVerse = firstVerseOfPage(pages[pageState.index] || pages[0]);
+}
+function unwrapPages() {
+  const vEl = $("#verses");
+  const pages = Array.from(vEl.querySelectorAll(".page"));
+  pages.forEach((pg) => {
+    while (pg.firstChild) vEl.insertBefore(pg.firstChild, pg);
+    pg.remove();
+  });
+  // always reset: renderChapter replaces innerHTML but leaves class + inline height behind
+  vEl.classList.remove("paged");
+  vEl.style.height = "";
+}
+function applyPageMode() {
+  const vEl = $("#verses");
+  const ind = $("#page-indicator");
+  if (!isPageMode() || !readViewVisible()) {
+    unwrapPages();
+    ind.classList.add("hidden");
+    ind.classList.remove("show");
+    pageState.total = 0; pageState.index = 0;
+    return;
+  }
+  // preserve position across re-pagination (font / resize / mode switch);
+  // only re-derive the anchor when there are real pages and none was saved
+  // (renderChapter saves it before replacing innerHTML)
+  if (pageState.anchorVerse == null && pageState.pendingPage == null && vEl.querySelector(".page")) rememberPageAnchor();
+  unwrapPages();
+  // measure one page of room: viewport minus the verses top, bottom nav, and indicator space
+  const nav = document.querySelector(".bottomnav");
+  const navH = nav ? nav.getBoundingClientRect().height : 64;
+  const top = vEl.getBoundingClientRect().top;
+  // 12px safety margin: verses re-wrap a hair differently inside .page
+  const pageH = Math.max(200, Math.floor(window.innerHeight - top - navH - 48 - 12));
+  vEl.style.height = pageH + "px";
+  // group child nodes into units: heading + verse (+ parallel English line);
+  // whitespace text nodes ride with the preceding unit
+  const units = [];
+  let cur = null, pendingText = [];
+  Array.from(vEl.childNodes).forEach((n) => {
+    if (n.nodeType === 3) { if (cur) cur.push(n); else pendingText.push(n); return; }
+    if (n.nodeType !== 1) return;
+    if (n.classList.contains("verse-head")) { cur = pendingText.concat([n]); pendingText = []; units.push(cur); return; }
+    if (n.classList.contains("verse")) { cur = pendingText.concat([n]); pendingText = []; units.push(cur); return; }
+    if (n.classList.contains("verse-en")) { if (cur) cur.push(n); else { cur = [n]; units.push(cur); } return; }
+    if (n.classList.contains("search-empty")) { cur = pendingText.concat([n]); pendingText = []; units.push(cur); return; }
+    if (cur) cur.push(n); else { cur = [n]; units.push(cur); }
+  });
+  if (pendingText.length && cur) pendingText.forEach((t) => cur.push(t));
+  // measure units in the still-unpaginated (scroll) layout
+  const vTop = vEl.getBoundingClientRect().top;
+  const pages = [];
+  let page = [], pageStart = null;
+  units.forEach((u) => {
+    const firstEl = u.find((n) => n.nodeType === 1);
+    if (!firstEl) { if (page.length) page[page.length - 1].push(...u); return; }
+    const r = firstEl.getBoundingClientRect();
+    // the first element's top margin collapses out in scroll layout but stays
+    // inside a .page (a BFC), so count it in the page budget
+    const mTop = parseFloat(getComputedStyle(firstEl).marginTop) || 0;
+    const effTop = r.top - mTop;
+    let bottom = r.bottom;
+    u.forEach((el) => { if (el.nodeType === 1) { const er = el.getBoundingClientRect(); if (er.bottom > bottom) bottom = er.bottom; } });
+    const uTop = effTop - vTop, uH = bottom - effTop;
+    if (page.length && pageStart !== null && (uTop - pageStart + uH > pageH)) {
+      pages.push(page); page = []; pageStart = null;
+    }
+    if (pageStart === null) pageStart = uTop;
+    page.push(u);
+  });
+  if (page.length) pages.push(page);
+  if (!pages.length) pages.push([]);
+  vEl.classList.add("paged");
+  pages.forEach((pg) => {
+    const d = document.createElement("div");
+    d.className = "page";
+    pg.forEach((u) => u.forEach((n) => d.appendChild(n)));
+    vEl.appendChild(d);
+  });
+  pageState.total = pages.length;
+  let idx = 0;
+  if (pageState.pendingPage === "last") idx = pages.length - 1;
+  else if (pageState.anchorVerse != null) {
+    const pi = pages.findIndex((pg) => pg.some((u) => u.some((n) => n.nodeType === 1 && n.classList && n.classList.contains("verse") && parseInt(n.dataset.v, 10) === pageState.anchorVerse)));
+    if (pi >= 0) idx = pi;
+  }
+  pageState.pendingPage = null;
+  pageState.anchorVerse = null;
+  pageState.index = idx;
+  vEl.scrollLeft = idx * vEl.clientWidth;
+  updatePageIndicator(true);
+}
+function updatePageIndicator(show) {
+  const ind = $("#page-indicator");
+  if (!isPageMode() || !pageState.total) { ind.classList.add("hidden"); ind.classList.remove("show"); return; }
+  ind.classList.remove("hidden");
+  ind.textContent = "第 " + (pageState.index + 1) + " / " + pageState.total + " 页";
+  if (show) {
+    ind.classList.add("show");
+    clearTimeout(pageState._fadeTimer);
+    pageState._fadeTimer = setTimeout(() => ind.classList.remove("show"), 1500);
+  }
+}
+function goPage(i) {
+  const vEl = $("#verses");
+  if (!isPageMode() || !pageState.total) return;
+  if (i < 0) {
+    const prev = prevChapter(current.book, current.chapter);
+    if (prev) { pageState.pendingPage = "last"; location.hash = "#/read/" + prev.book + "/" + prev.chapter; }
+    return;
+  }
+  if (i >= pageState.total) {
+    const next = nextChapter(current.book, current.chapter);
+    if (next) { pageState.pendingPage = "first"; location.hash = "#/read/" + next.book + "/" + next.chapter; }
+    return;
+  }
+  pageState.index = i;
+  vEl.scrollTo({ left: i * vEl.clientWidth, behavior: "smooth" });
+  updatePageIndicator(true);
+}
+function initPageGestures() {
+  const vEl = $("#verses");
+  // native horizontal scroll + snap does the dragging; just track the page
+  vEl.addEventListener("scroll", () => {
+    if (!isPageMode() || !pageState.total) return;
+    clearTimeout(pageState._scrollTimer);
+    pageState._scrollTimer = setTimeout(() => {
+      const i = Math.round(vEl.scrollLeft / vEl.clientWidth);
+      if (i !== pageState.index && i >= 0 && i < pageState.total) {
+        pageState.index = i;
+        updatePageIndicator(true);
+      }
+    }, 120);
+  }, { passive: true });
+  // boundary swipe: at the first/last page, a deliberate swipe crosses chapters
+  let tx = 0, ty = 0;
+  vEl.addEventListener("touchstart", (e) => {
+    if (!isPageMode()) return;
+    tx = e.touches[0].clientX; ty = e.touches[0].clientY;
+  }, { passive: true });
+  vEl.addEventListener("touchend", (e) => {
+    if (!isPageMode() || !pageState.total) return;
+    const dx = e.changedTouches[0].clientX - tx;
+    const dy = e.changedTouches[0].clientY - ty;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (dx > 0 && pageState.index === 0) goPage(-1);
+    else if (dx < 0 && pageState.index === pageState.total - 1) goPage(pageState.total);
+  }, { passive: true });
+  // tap the blank left/right quarters to turn; taps on verse text still select
+  vEl.addEventListener("click", (e) => {
+    if (!isPageMode() || !pageState.total) return;
+    if (e.target.closest(".verse, .verse-head, .verse-en, .orig-line, .search-empty, a, button")) return;
+    const r = vEl.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    if (x < r.width * 0.25) goPage(pageState.index - 1);
+    else if (x > r.width * 0.75) goPage(pageState.index + 1);
+  });
+  // tap an original-language word to open the lexicon drawer
+  vEl.addEventListener("click", (e) => {
+    const w = e.target.closest(".oword");
+    if (!w) return;
+    const line = w.closest(".orig-line");
+    if (!line) return;
+    const vn = parseInt(line.dataset.v, 10);
+    const map = lexBookCache[current.book];
+    const words = map && map.get(current.chapter + ":" + vn);
+    const tok = words && words[+w.dataset.w];
+    if (tok) openLexicon(tok, current.book, current.chapter, vn);
+  });
+  // keyboard
+  document.addEventListener("keydown", (e) => {
+    if (!isPageMode() || !readViewVisible() || !pageState.total) return;
+    const t = e.target;
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) return;
+    if (document.querySelector(".drawer:not(.hidden), .sheet:not(.hidden)")) return;
+    if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") { e.preventDefault(); goPage(pageState.index + 1); }
+    else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); goPage(pageState.index - 1); }
+  });
+  // re-paginate on resize (font/width changes move the breaks)
+  let rzTimer = null;
+  window.addEventListener("resize", () => {
+    if (!isPageMode() || !readViewVisible()) return;
+    clearTimeout(rzTimer);
+    rzTimer = setTimeout(() => applyPageMode(), 200);
+  });
+}
+
+/* ---------- original-language lexicon (Strong's, no API) ---------- */
+/* Data: data/lexicon/ — hebrew/greek per-book word lists (OSHB / TAGNT),
+   strongs-zh.json (Strong's + UBS Chinese glosses), concordance shards.
+   Word files are keyed by KJV versification; a few CUV chapters drift
+   (e.g. Num 1). Verses with no lexicon words simply show no orig line. */
+const LEX_CONC_ABBREV = {
+  Gen: "gen", Exod: "ex", Lev: "lv", Num: "nm", Deu: "dt", Josh: "jos", Judg: "jdg",
+  Ruth: "rut", "1Sam": "1sa", "2Sam": "2sa", "1Kgs": "1ki", "2Kgs": "2ki",
+  "1Chr": "1ch", "2Chr": "2ch", Ezra: "ezr", Neh: "neh", Esth: "est", Job: "job",
+  Ps: "psa", Prov: "pro", Eccl: "ecc", Song: "sng", Isa: "isa", Jer: "jer", Lam: "lam",
+  Ezek: "ezk", Dan: "dan", Hos: "hos", Joel: "jol", Amos: "amo", Obad: "oba",
+  Jonah: "jon", Mic: "mic", Nah: "nam", Hab: "hab", Zeph: "zep", Hag: "hag",
+  Zech: "zec", Mal: "mal", Matt: "mat", Mark: "mrk", Luke: "luk", John: "jhn",
+  Acts: "act", Rom: "rom", "1Cor": "1co", "2Cor": "2co", Gal: "gal", Eph: "eph",
+  Phil: "php", Col: "col", "1Thess": "1th", "2Thess": "2th", "1Tim": "1ti",
+  "2Tim": "2ti", Titus: "tit", Phlm: "phm", Heb: "heb", Jas: "jas", "1Pet": "1pe",
+  "2Pet": "2pe", "1John": "1jn", "2John": "2jn", "3John": "3jn", Jude: "jud", Rev: "rev",
+};
+const LEX_POS_ZH = {
+  noun: "名词", verb: "动词", adjective: "形容词", adverb: "副词",
+  preposition: "介词", conjunction: "连词", pronoun: "代词", particle: "小品词",
+  interjection: "感叹词", article: "冠词", prefix: "前缀", numeral: "数词",
+};
+const lexBookCache = {};
+const concShardCache = {};
+let strongsDict = null;
+let lexHighlight = null; // {book, chapter, verse, strong} — jump target from a ref tap
+let lexCurrent = null; // {strong, form, entry, conc, curKey} — current drawer content
+
+async function loadLexiconBook(abbrev) {
+  if (lexBookCache[abbrev]) return lexBookCache[abbrev];
+  const book = bookByAbbrev(abbrev);
+  const dir = book && book.testament === "OT" ? "hebrew" : "greek";
+  const data = await (await fetch("data/lexicon/" + dir + "/" + abbrev + ".json")).json();
+  const map = new Map();
+  data.forEach((entry) => map.set(entry.v[0] + ":" + entry.v[1], entry.w));
+  lexBookCache[abbrev] = map;
+  return map;
+}
+async function loadStrongsDict() {
+  if (strongsDict) return strongsDict;
+  strongsDict = await (await fetch("data/lexicon/strongs-zh.json")).json();
+  return strongsDict;
+}
+async function loadConcordance(strong) {
+  const n = parseInt(strong.slice(1), 10);
+  const shard = String(Math.floor(n / 100) * 100).padStart(4, "0");
+  const key = strong[0] + shard;
+  if (!concShardCache[key]) {
+    concShardCache[key] = await (await fetch("data/lexicon/concordance/" + key + ".json")).json();
+  }
+  return concShardCache[key][strong] || null;
+}
+
+/* Robinson morphology code → Chinese, Greek only. Returns null when the
+   code does not match a known pattern; the caller then shows the raw code. */
+const GREEK_CASE = { N: "主格", G: "属格", D: "与格", A: "宾格", V: "呼格" };
+const GREEK_NUM = { S: "单数", P: "复数" };
+const GREEK_GEN = { M: "阳性", F: "阴性", N: "中性" };
+const GREEK_TENSE = { P: "现在时", I: "未完成时", F: "将来时", A: "不定过去时", X: "完成时", Y: "过去完成时" };
+const GREEK_VOICE = { A: "主动", M: "中间", P: "被动", E: "中间/被动", D: "异相" };
+const GREEK_MOOD = { I: "直陈", S: "虚拟", O: "祈愿", M: "命令", N: "不定式", P: "分词" };
+function lexTense(code) {
+  const second = code.charAt(0) === "2";
+  const base = second ? code.charAt(1) : code.charAt(0);
+  return (second ? "第二" : "") + (GREEK_TENSE[base] || "");
+}
+function decodeGreekMorph(m) {
+  if (!m) return null;
+  if (m === "CONJ") return "连词";
+  if (m === "PREP") return "介词";
+  if (m === "ADV") return "副词";
+  if (m === "PRT" || m.indexOf("PRT-") === 0) return "小品词";
+  if (m === "I") return "感叹词";
+  let mm = m.match(/^([NATP])-([NGDAV])([SP])([MFN])$/);
+  if (mm) {
+    const pos = { N: "名词", A: "形容词", T: "冠词", P: "代词" }[mm[1]];
+    return pos + " · " + GREEK_CASE[mm[2]] + GREEK_NUM[mm[3]] + GREEK_GEN[mm[4]];
+  }
+  mm = m.match(/^V-([123]?[PIFAXY])([AMPED])([ISOM])-([123])([SP])$/);
+  if (mm) return "动词 · " + lexTense(mm[1]) + GREEK_VOICE[mm[2]] + GREEK_MOOD[mm[3]] + " " + mm[4] + GREEK_NUM[mm[5]];
+  mm = m.match(/^V-([123]?[PIFAXY])([AMPED])N$/);
+  if (mm) return "动词 · " + lexTense(mm[1]) + GREEK_VOICE[mm[2]] + "不定式";
+  mm = m.match(/^V-([123]?[PIFAXY])([AMPED])P-([NGDAV])([SP])([MFN])$/);
+  if (mm) return "动词 · " + lexTense(mm[1]) + GREEK_VOICE[mm[2]] + "分词 · " + GREEK_CASE[mm[3]] + GREEK_NUM[mm[4]] + GREEK_GEN[mm[5]];
+  return null;
+}
+function lexMorphText(tok, isGreek) {
+  const decoded = isGreek ? decodeGreekMorph(tok.m) : null;
+  if (decoded) return { main: decoded, code: tok.m };
+  return { main: null, code: tok.m };
+}
+
+/* Group concordance refs ("Gen.2.4") by book, keeping canonical order. */
+function lexGroupRefs(refs) {
+  const groups = [];
+  const byBook = {};
+  (refs || []).forEach((r) => {
+    const parts = r.split(".");
+    const ab = LEX_CONC_ABBREV[parts[0]];
+    if (!ab || parts.length !== 3) return;
+    if (!byBook[ab]) { byBook[ab] = { book: ab, items: [] }; groups.push(byBook[ab]); }
+    byBook[ab].items.push({ chapter: +parts[1], verse: +parts[2] });
+  });
+  return groups;
+}
+function lexRefHtml(item, book, curKey) {
+  const key = book + ":" + item.chapter + ":" + item.verse;
+  const isCur = key === curKey;
+  return `<button class="lex-ref${isCur ? " current" : ""}" data-book="${book}" data-ch="${item.chapter}" data-v="${item.verse}">${item.chapter}:${item.verse}${isCur ? " · 当前" : ""}</button>`;
+}
+function lexGroupHtml(group, curKey) {
+  const head = `<div class="lex-group-head">${esc(bookByAbbrev(group.book).name)} <span class="lex-group-count">${group.items.length} 节</span></div>`;
+  const shown = group.items.slice(0, 10);
+  const rest = group.items.slice(10);
+  const refs = shown.map((it) => lexRefHtml(it, group.book, curKey)).join("") +
+    (rest.length ? `<span class="lex-ref-rest hidden">${rest.map((it) => lexRefHtml(it, group.book, curKey)).join("")}</span>` : "");
+  const more = rest.length ? `<button class="lex-ref-more" data-rest="${rest.length}">展开全部（还有 ${rest.length} 条）</button>` : "";
+  return `<div class="lex-group">${head}<div class="lex-group-refs">${refs}${more}</div></div>`;
+}
+function lexRefsHtml(conc, curKey) {
+  const groups = lexGroupRefs(conc.refs);
+  return groups.map((g) => lexGroupHtml(g, curKey)).join("");
+}
+function lexDistHtml(conc) {
+  const groups = lexGroupRefs(conc.refs);
+  const rows = groups.map((g) =>
+    `<div class="lex-dist-row"><span>${esc(bookByAbbrev(g.book).name)}</span><b>${g.items.length} 节</b></div>`).join("");
+  return `<p class="lex-dist-note">出现 ${conc.count.toLocaleString()} 次，分布在 ${groups.length} 卷。先显示各卷分布：</p>` +
+    `<div class="lex-dist">${rows}</div>` +
+    `<button class="btn-ghost lex-show-all" id="lex-show-all">查看全部出处</button>`;
+}
+
+function lexEntryText(strong, form, entry, conc) {
+  const lines = [form + "  " + strong];
+  if (entry.translit) lines.push("音译：" + entry.translit);
+  if (entry.lemma) lines.push("词元：" + entry.lemma);
+  const pos = LEX_POS_ZH[entry.pos] || entry.pos || "";
+  if (pos) lines.push("词性：" + pos);
+  if (entry.gloss_zh) lines.push("中文释义：" + entry.gloss_zh);
+  else if (entry.gloss_en) lines.push("英文释义：" + entry.gloss_en + "（暂无中文释义）");
+  if (entry.def_zh) lines.push("详细释义：" + entry.def_zh);
+  if (conc) lines.push("全圣经出现 " + conc.count.toLocaleString() + " 次（分布在 " + conc.refs.length + " 节）");
+  lines.push("—— Nesive Bible 原文词典");
+  return lines.join("\n");
+}
+
+async function openLexicon(tok, bookAbbrev, chapter, verse) {
+  const body = $("#lex-body");
+  const book = bookByAbbrev(bookAbbrev);
+  const isGreek = book && book.testament === "NT";
+  body.innerHTML = `<p class="lex-loading">正在查词典…</p>`;
+  openDrawer("#drawer-lexicon");
+  let dict, conc;
+  try {
+    [dict, conc] = await Promise.all([loadStrongsDict(), loadConcordance(tok.s)]);
+  } catch (e) {
+    body.innerHTML = `<p class="lex-loading">词典加载失败（${esc(String(e.message || e))}）。<br>请检查网络后重新点词。</p>`;
+    return;
+  }
+  const entry = dict[tok.s] || {};
+  const curKey = bookAbbrev + ":" + chapter + ":" + verse;
+  const posZh = LEX_POS_ZH[entry.pos] || entry.pos || "—";
+  const morph = lexMorphText(tok, isGreek);
+  const strong = tok.s;
+  const form = tok.t;
+  let html = `<div class="lex-head" dir="${isGreek ? "ltr" : "rtl"}"><div class="lex-form">${esc(form)}</div>` +
+    (entry.translit ? `<div class="lex-translit">${esc(entry.translit)}</div>` : "") + `</div>`;
+  html += `<div class="lex-rows">`;
+  html += `<div class="lex-row"><span>Strong's</span><div><button class="lex-strong" id="lex-copy-strong">${esc(strong)}</button><span class="lex-hint">点编号复制</span></div></div>`;
+  if (entry.lemma) html += `<div class="lex-row"><span>词元</span><div class="lex-lemma" dir="${isGreek ? "ltr" : "rtl"}">${esc(entry.lemma)}</div></div>`;
+  html += `<div class="lex-row"><span>词性</span><div>${esc(posZh)}</div></div>`;
+  if (morph.main) html += `<div class="lex-row"><span>形态</span><div>${esc(morph.main)} <code class="lex-code">${esc(morph.code)}</code></div></div>`;
+  else if (morph.code) html += `<div class="lex-row"><span>形态码</span><div><code class="lex-code">${esc(morph.code)}</code></div></div>`;
+  if (entry.gloss_zh) html += `<div class="lex-row"><span>中文释义</span><div class="lex-gloss">${esc(entry.gloss_zh)}</div></div>`;
+  else html += `<div class="lex-row"><span>中文释义</span><div class="lex-nozh">暂无中文释义</div></div>`;
+  if (!entry.gloss_zh && entry.gloss_en) html += `<div class="lex-row"><span>英文释义</span><div>${esc(entry.gloss_en)}</div></div>`;
+  if (entry.def_zh) html += `<div class="lex-row"><span>详细释义</span><div>${esc(entry.def_zh)}</div></div>`;
+  else if (entry.gloss_en && entry.gloss_zh) html += `<div class="lex-row"><span>英文释义</span><div>${esc(entry.gloss_en)}</div></div>`;
+  if (conc) html += `<div class="lex-row"><span>出现</span><div>全圣经出现 <b>${conc.count.toLocaleString()}</b> 次（分布在 ${conc.refs.length} 节）</div></div>`;
+  html += `</div>`;
+  if (conc && conc.refs && conc.refs.length) {
+    html += `<div class="lex-refs-head">全部出处</div><div id="lex-refs">`;
+    if (conc.count > 500) html += lexDistHtml(conc);
+    else html += lexRefsHtml(conc, curKey);
+    html += `</div>`;
+  } else if (conc) {
+    html += `<p class="lex-loading">本词无汇编出处。</p>`;
+  }
+  html += `<div class="lex-actions"><button class="btn-ghost" id="lex-copy">复制词条</button></div>`;
+  html += `<p class="drawer-note">原文数据：希伯来文（OSHB / WLC，公有领域；标注 CC BY 4.0）、希腊文（STEPBible TAGNT，CC BY 4.0）、中文释义（UBS 词典，CC BY-SA 4.0）。<a href="data/lexicon/LICENSE-DATA.md" target="_blank" rel="noopener">来源与许可</a></p>`;
+  body.innerHTML = html;
+  lexCurrent = { strong, form, entry, conc, curKey };
+}
+
+/* One delegated handler for the whole lexicon drawer, so re-rendered
+   ref lists (show-all / expand) keep working without re-binding. */
+function initLexiconDrawer() {
+  $("#lex-body").addEventListener("click", (e) => {
+    if (e.target.closest("#lex-copy-strong") && lexCurrent) {
+      copyText(lexCurrent.strong, "已复制 " + lexCurrent.strong);
+      return;
+    }
+    if (e.target.closest("#lex-copy") && lexCurrent) {
+      copyText(lexEntryText(lexCurrent.strong, lexCurrent.form, lexCurrent.entry, lexCurrent.conc), "词条已复制");
+      return;
+    }
+    if (e.target.closest("#lex-show-all") && lexCurrent) {
+      $("#lex-refs").innerHTML = lexRefsHtml(lexCurrent.conc, lexCurrent.curKey);
+      return;
+    }
+    const more = e.target.closest(".lex-ref-more");
+    if (more) {
+      const rest = more.parentElement.querySelector(".lex-ref-rest");
+      if (rest) rest.classList.remove("hidden");
+      more.remove();
+      return;
+    }
+    const ref = e.target.closest(".lex-ref");
+    if (ref && lexCurrent) {
+      const target = { book: ref.dataset.book, chapter: +ref.dataset.ch, verse: +ref.dataset.v, strong: lexCurrent.strong };
+      closeDrawers();
+      if (target.book === current.book && target.chapter === current.chapter) {
+        lexHighlight = target;
+        highlightLexTarget();
+      } else {
+        lexHighlight = target;
+        location.hash = "#/read/" + target.book + "/" + target.chapter;
+      }
+    }
+  });
+}
+
+function maybeHighlightLexTarget() {
+  if (!lexHighlight) return;
+  if (lexHighlight.book !== current.book || lexHighlight.chapter !== current.chapter) return;
+  highlightLexTarget();
+}
+function highlightLexTarget() {
+  if (!lexHighlight) return;
+  const { verse, strong } = lexHighlight;
+  lexHighlight = null;
+  const vEl = $("#verses");
+  const verseEl = vEl.querySelector(`.verse[data-v="${verse}"]`);
+  if (!verseEl) return;
+  if (isPageMode() && pageState.total) {
+    const pages = Array.from(vEl.querySelectorAll(".page"));
+    const idx = pages.findIndex((pg) => pg.contains(verseEl));
+    if (idx >= 0 && idx !== pageState.index) goPage(idx);
+  } else {
+    verseEl.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+  verseEl.classList.add("lex-target");
+  setTimeout(() => verseEl.classList.remove("lex-target"), 2600);
+  if (settings.original) {
+    const line = vEl.querySelector(`.orig-line[data-v="${verse}"]`);
+    if (line) {
+      line.querySelectorAll(`.oword[data-s="${strong}"]`).forEach((w) => {
+        w.classList.add("lex-target-word");
+        setTimeout(() => w.classList.remove("lex-target-word"), 2600);
+      });
+    }
+  }
 }
 
 /* ---------- verse selection (wd.bible style: tap to select) ---------- */
@@ -552,7 +1168,7 @@ async function renderVerse(abbrev, chapter, verse) {
     } catch (e) { text = ""; }
     if (!text && v === want[0]) continue;
     if (v === want[0]) mainText = text;
-    if (text) blocks.push({ label: VERSIONS[v].label, text, en: v === "kjv" || v === "esv" });
+    if (text) blocks.push({ label: VERSIONS[v].label, text, en: VERSIONS[v].lang === "en" });
   }
   if (!mainText) { location.hash = "#/read/" + abbrev + "/" + chapter; return; }
   const key = verseKey(abbrev, chapter, verse);
@@ -632,9 +1248,9 @@ async function shareText(text) {
 // Bookmarks, highlights, notes, history and settings live in localStorage (persistent
 // on this device). Export writes them to a JSON file so they survive a device
 // change or a browser data wipe; import restores them.
-const BACKUP_KEYS = ["bookmarks", "highlights", "notes", "history", "settings", "lastRead", "plan"];
+const BACKUP_KEYS = ["bookmarks", "highlights", "notes", "history", "settings", "lastRead", "plan", "typingProgress", "typingBest", "typingMistakes", "typingStats"];
 function exportBackup() {
-  const data = { app: "FlareBible", version: 1, exportedAt: new Date().toISOString(), data: {} };
+  const data = { app: "FlareBible", version: 1, exportedAt: new Date().toISOString(), profile: currentProfile().name, data: {} };
   BACKUP_KEYS.forEach((k) => { data.data[k] = store.get(k, k === "settings" ? settings : (k === "history" ? [] : {})); });
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
@@ -655,7 +1271,9 @@ async function importBackup(file) {
     });
     if (data.data.settings) Object.assign(settings, data.data.settings);
     applySettings();
-    toast("已导入备份（" + n + " 项）");
+    // The backup restores into the CURRENT profile; note when it came from another profile.
+    const from = data.profile ? "（备份来自档案「" + data.profile + "」，已导入当前档案「" + currentProfile().name + "」）" : "";
+    toast("已导入备份（" + n + " 项）" + from);
     renderChapter(current.book, current.chapter);
   } catch (e) {
     toast("导入失败：不是有效的备份文件");
@@ -880,7 +1498,7 @@ function openDrawer(id) {
   $(id).classList.remove("hidden");
 }
 function closeDrawers() {
-  ["#drawer-picker", "#drawer-version", "#drawer-settings"].forEach((s) => $(s).classList.add("hidden"));
+  ["#drawer-picker", "#drawer-version", "#drawer-settings", "#drawer-lexicon"].forEach((s) => $(s).classList.add("hidden"));
   $("#drawer-backdrop").classList.add("hidden");
 }
 let pickerTab = "OT";
@@ -906,8 +1524,404 @@ async function showPickerChapters(abbrev) {
     `<button data-ch="${i + 1}" class="${abbrev === current.book && i + 1 === current.chapter ? "current" : ""}">${i + 1}</button>`).join("");
   $$("#picker-chapter-grid button").forEach((b) => b.addEventListener("click", () => {
     closeDrawers();
-    location.hash = "#/read/" + abbrev + "/" + b.dataset.ch;
+    if (pickerMode === "typing") {
+      pickerMode = "read";
+      location.hash = "#/typing?book=" + abbrev + "&chapter=" + b.dataset.ch;
+    } else {
+      location.hash = "#/read/" + abbrev + "/" + b.dataset.ch;
+    }
   }));
+}
+
+/* ---------- typing: learn English through the Bible (earthworm style) ---------- */
+let typingIpa = null, typingIpaLoading = null;
+let typingSet = null;        // {title, verses: [{book, chapter, verse, zh, en}]}
+let typingIdx = 0;
+let typingMode = "dictation"; // dictation | copy | listen
+let typingShowIpa = true;
+let typingAttempt = null;    // {typed:[], cur:0, startedAt, submitted, revealed}
+let typingSession = null;    // {verses, words, correct, wpmTotal, wpmCount}
+let pickerMode = "read";     // "read" | "typing"
+const TYPING_CLASSICS = [
+  { name: "约翰福音 3:16", refs: [["jhn", 3, 16]] },
+  { name: "诗篇 23 篇", refs: [["psa", 23, 1], ["psa", 23, 2], ["psa", 23, 3], ["psa", 23, 4], ["psa", 23, 5], ["psa", 23, 6]] },
+  { name: "主祷文", refs: [["mat", 6, 9], ["mat", 6, 10], ["mat", 6, 11], ["mat", 6, 12], ["mat", 6, 13]] },
+  { name: "爱篇 · 林前 13:4-7", refs: [["1co", 13, 4], ["1co", 13, 5], ["1co", 13, 6], ["1co", 13, 7]] },
+  { name: "约翰福音 1:1", refs: [["jhn", 1, 1]] },
+  { name: "创世记 1:1", refs: [["gen", 1, 1]] },
+];
+function normWord(w) { return String(w || "").toLowerCase().replace(/[^a-z']/g, ""); }
+function typingTokens(enText) {
+  return String(enText || "").split(/\s+/).filter(Boolean).map((tok) => ({ disp: tok, norm: normWord(tok) }));
+}
+async function loadTypingIpa() {
+  if (typingIpa) return typingIpa;
+  if (!typingIpaLoading) {
+    typingIpaLoading = fetch("data/ipa.json").then((r) => r.json()).then((j) => {
+      typingIpa = j;
+      if (typingSet && !$("#typing-practice").classList.contains("hidden")) renderTypingSlots();
+      return j;
+    }).catch(() => { typingIpa = {}; return typingIpa; });
+  }
+  return typingIpaLoading;
+}
+function typingPickVoice() {
+  if (!("speechSynthesis" in window)) return null;
+  const vs = speechSynthesis.getVoices();
+  if (!vs.length) return null;
+  const pref = vs.filter((v) => v.lang && v.lang.toLowerCase().indexOf("en-us") === 0);
+  const pool = pref.length ? pref : vs.filter((v) => v.lang && v.lang.toLowerCase().indexOf("en") === 0);
+  if (!pool.length) return null;
+  return pool.find((v) => /google|natural|samantha|zira|aria/i.test(v.name)) || pool[0];
+}
+function typingSpeak(text, onEnd) {
+  if (!("speechSynthesis" in window)) { toast("本机不支持语音朗读"); return false; }
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "en-US";
+    u.rate = 0.9;
+    const v = typingPickVoice();
+    if (v) u.voice = v;
+    u.onerror = () => { toast("本机无英文语音，无法朗读"); };
+    if (onEnd) u.onend = onEnd;
+    speechSynthesis.speak(u);
+    return true;
+  } catch (e) { return false; }
+}
+if ("speechSynthesis" in window) {
+  speechSynthesis.addEventListener("voiceschanged", () => {});
+}
+function typingMistakes() { return store.get("typingMistakes", {}); }
+function typingStats() { return store.get("typingStats", { verses: 0, words: 0, correct: 0, wpmTotal: 0, wpmCount: 0, bestWpm: 0 }); }
+async function buildTypingVerses(refs) {
+  const out = [];
+  const cache = {};
+  for (const [book, ch, vs] of refs) {
+    if (!cache[book]) {
+      const [cuv, kjv] = await Promise.all([loadBook(book, "cuv"), loadBook(book, "kjv")]);
+      cache[book] = { cuv, kjv };
+    }
+    const zh = cache[book].cuv.chapters[ch - 1] ? cache[book].cuv.chapters[ch - 1][vs - 1] : "";
+    const en = cache[book].kjv.chapters[ch - 1] ? cache[book].kjv.chapters[ch - 1][vs - 1] : "";
+    if (en && en.trim()) out.push({ book, chapter: ch, verse: vs, zh: zh || "", en });
+  }
+  return out;
+}
+async function startTypingSet(title, refs) {
+  const verses = await buildTypingVerses(refs);
+  if (!verses.length) { toast("没有可练习的经文"); return; }
+  typingSet = { title, verses };
+  typingIdx = 0;
+  typingSession = { verses: 0, words: 0, correct: 0, wpmTotal: 0, wpmCount: 0 };
+  store.set("typingProgress", { title, idx: 0, at: Date.now() });
+  showTypingView();
+  showTypingVerse();
+}
+function showTypingView() {
+  $("#typing-home").classList.add("hidden");
+  $("#typing-summary").classList.add("hidden");
+  $("#typing-practice").classList.remove("hidden");
+}
+async function renderTypingHome() {
+  await loadIndex();
+  $("#typing-practice").classList.add("hidden");
+  $("#typing-summary").classList.add("hidden");
+  $("#typing-home").classList.remove("hidden");
+  const last = store.get("lastRead", null);
+  const cur = (current && current.book) ? current : last;
+  const chRef = cur ? refLabel(cur.book, cur.chapter) : "创世记 1章";
+  const chBook = cur ? cur.book : "gen", chNum = cur ? cur.chapter : 1;
+  const daily = DAILY_VERSES[dayOfYear() % DAILY_VERSES.length];
+  const mistakes = typingMistakes();
+  const mCount = Object.keys(mistakes).length;
+  const st = typingStats();
+  const acc = st.words ? Math.round((st.correct / st.words) * 100) : null;
+  const cards = [
+    { id: "chapter", name: "练本章", desc: chRef, go: () => startTypingChapter(chBook, chNum) },
+    { id: "daily", name: "今日金句", desc: refLabel(daily[0], daily[1], daily[2]), go: () => startTypingSet("今日金句 · " + refLabel(daily[0], daily[1], daily[2]), [[daily[0], daily[1], daily[2]]]) },
+    { id: "mistakes", name: "复习错词", desc: mCount ? mCount + " 个词待复习" : "暂无错词，先练几节", go: () => startMistakeReview(), disabled: !mCount },
+    { id: "pick", name: "自选章节", desc: "选一卷一章来练", go: () => { pickerMode = "typing"; renderPicker(); openDrawer("#drawer-picker"); } },
+  ];
+  let html = cards.map((c) =>
+    `<button class="typing-set-card" data-set="${c.id}" ${c.disabled ? "disabled" : ""}><strong>${esc(c.name)}</strong><span>${esc(c.desc)}</span></button>`).join("");
+  html += `<h2 class="typing-sec">经典段落</h2><div class="typing-sets">` +
+    TYPING_CLASSICS.map((c, i) =>
+      `<button class="typing-set-card" data-classic="${i}"><strong>${esc(c.name)}</strong><span>${c.refs.length} 节</span></button>`).join("") + `</div>`;
+  $("#typing-sets").innerHTML = html;
+  $$("#typing-sets .typing-set-card").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.set) { const c = cards.find((x) => x.id === b.dataset.set); if (c) c.go(); }
+    else if (b.dataset.classic !== undefined) {
+      const c = TYPING_CLASSICS[parseInt(b.dataset.classic, 10)];
+      startTypingSet(c.name, c.refs);
+    }
+  }));
+  $("#typing-stats").innerHTML =
+    `<div class="typing-stat"><b>${st.verses}</b><span>已练节数</span></div>` +
+    `<div class="typing-stat"><b>${st.words}</b><span>累计单词</span></div>` +
+    `<div class="typing-stat"><b>${acc === null ? "—" : acc + "%"}</b><span>平均正确率</span></div>` +
+    `<div class="typing-stat"><b>${st.bestWpm ? Math.round(st.bestWpm) : "—"}</b><span>最佳 WPM</span></div>`;
+  const prog = store.get("typingProgress", null);
+  if (prog && prog.title && typingSet && typingSet.title === prog.title && prog.idx > 0 && prog.idx < typingSet.verses.length) {
+    typingIdx = prog.idx;
+  }
+}
+let typingBookCache = {};
+async function startTypingChapter(book, chapter) {
+  if (!typingBookCache[book]) typingBookCache[book] = await loadBook(book, "kjv");
+  const n = typingBookCache[book].chapters[chapter - 1] ? typingBookCache[book].chapters[chapter - 1].length : 0;
+  const refs = [];
+  for (let v = 1; v <= n; v++) refs.push([book, chapter, v]);
+  await startTypingSet("练本章 · " + refLabel(book, chapter), refs);
+}
+function startMistakeReview() {
+  const mistakes = typingMistakes();
+  const refs = [];
+  const seen = new Set();
+  Object.values(mistakes).forEach((m) => {
+    const k = m.book + ":" + m.chapter + ":" + m.verse;
+    if (!seen.has(k)) { seen.add(k); refs.push([m.book, m.chapter, m.verse]); }
+  });
+  if (!refs.length) { toast("暂无错词"); return; }
+  startTypingSet("复习错词", refs);
+}
+async function renderTyping(book, chapter, verse) {
+  await loadIndex();
+  if (verse) {
+    await startTypingSet(refLabel(book, chapter, verse), [[book, chapter, verse]]);
+  } else {
+    await startTypingChapter(book, chapter);
+  }
+}
+function currentTypingVerse() { return typingSet ? typingSet.verses[typingIdx] : null; }
+function showTypingVerse(autoSpeak) {
+  const v = currentTypingVerse();
+  if (!v) return;
+  loadTypingIpa();
+  typingAttempt = { typed: [], cur: 0, startedAt: 0, submitted: false, revealed: false, results: [] };
+  typingAttempt.tokens = typingTokens(v.en);
+  $("#typing-ref").textContent = typingSet.title + " · 第 " + (typingIdx + 1) + " / " + typingSet.verses.length + " 节";
+  $("#typing-count").textContent = refLabel(v.book, v.chapter, v.verse);
+  $("#typing-bar").style.width = Math.round((typingIdx / typingSet.verses.length) * 100) + "%";
+  $$("#typing-mode button").forEach((b) => b.classList.toggle("active", b.dataset.m === typingMode));
+  renderTypingPrompt();
+  renderTypingSlots();
+  $("#typing-input").value = "";
+  $("#typing-next").textContent = typingIdx === typingSet.verses.length - 1 ? "看总结 →" : "下一节 →";
+  if (autoSpeak && typingMode === "listen") typingSpeak(v.en);
+}
+function renderTypingPrompt() {
+  const v = currentTypingVerse();
+  const p = $("#typing-prompt");
+  if (!v) { p.textContent = ""; return; }
+  if (typingMode === "dictation") { p.textContent = v.zh; p.classList.remove("typing-prompt-en"); }
+  else if (typingMode === "copy") { p.textContent = v.en; p.classList.add("typing-prompt-en"); }
+  else { p.innerHTML = "🔊 点右上角喇叭听读音，凭听到的打出来"; p.classList.remove("typing-prompt-en"); }
+}
+function renderTypingSlots() {
+  const v = currentTypingVerse();
+  const a = typingAttempt;
+  const box = $("#typing-slots");
+  if (!v || !a) { box.innerHTML = ""; return; }
+  box.innerHTML = a.tokens.map((t, i) => {
+    const typed = a.typed[i] || "";
+    let cls = "tslot";
+    if (a.submitted) cls += a.results[i] ? " t-ok" : " t-bad";
+    else if (i === a.cur) cls += " t-cur";
+    const ipa = (typingShowIpa && typingIpa && typingIpa[t.norm]) ? `<span class="tipa">/${esc(typingIpa[t.norm])}/</span>` : `<span class="tipa"></span>`;
+    const fix = (a.submitted && !a.results[i]) ? `<span class="tfix">${esc(t.disp)}</span>` : "";
+    return `<span class="${cls}" data-i="${i}" style="min-width:${Math.max(3, t.disp.length)}ch"><span class="tword">${esc(typed)}</span><span class="tline"></span>${ipa}${fix}</span>`;
+  }).join(" ");
+  const curEl = box.querySelector(".tslot.t-cur");
+  if (curEl) curEl.scrollIntoView({ block: "nearest" });
+}
+function typingCommitCurrent() {
+  const a = typingAttempt;
+  const inp = $("#typing-input");
+  const w = inp.value.trim();
+  if (!a || a.submitted) return false;
+  if (!w) return false;
+  if (!a.startedAt) a.startedAt = Date.now();
+  a.typed[a.cur] = w;
+  inp.value = "";
+  if (a.cur < a.tokens.length - 1) a.cur++;
+  else { renderTypingSlots(); typingSubmit(); return true; }
+  renderTypingSlots();
+  return true;
+}
+function typingSubmit() {
+  const a = typingAttempt;
+  const v = currentTypingVerse();
+  if (!a || a.submitted || !v) return;
+  a.submitted = true;
+  let correct = 0;
+  a.results = a.tokens.map((t, i) => {
+    const ok = normWord(a.typed[i] || "") === t.norm && (a.typed[i] || "") !== "";
+    if (ok) correct++;
+    return ok;
+  });
+  const total = a.tokens.length;
+  const mins = Math.max((Date.now() - (a.startedAt || Date.now())) / 60000, 1 / 60);
+  const wpm = correct / mins;
+  typingSession.verses++;
+  typingSession.words += total;
+  typingSession.correct += correct;
+  typingSession.wpmTotal += wpm;
+  typingSession.wpmCount++;
+  // mistakes book: wrong words in, words typed right in review come out
+  const mistakes = typingMistakes();
+  let changed = false;
+  a.tokens.forEach((t, i) => {
+    if (!t.norm) return;
+    if (!a.results[i]) {
+      if (!mistakes[t.norm]) mistakes[t.norm] = { word: t.norm, disp: t.disp, book: v.book, chapter: v.chapter, verse: v.verse, count: 0 };
+      mistakes[t.norm].count++;
+      changed = true;
+    } else if (mistakes[t.norm]) {
+      delete mistakes[t.norm];
+      changed = true;
+    }
+  });
+  if (changed) store.set("typingMistakes", mistakes);
+  const st = typingStats();
+  st.verses++; st.words += total; st.correct += correct;
+  st.wpmTotal += wpm; st.wpmCount++;
+  if (wpm > (st.bestWpm || 0)) st.bestWpm = Math.round(wpm);
+  store.set("typingStats", st);
+  store.set("typingProgress", { title: typingSet.title, idx: typingIdx + 1, at: Date.now() });
+  renderTypingSlots();
+  toast(correct === total ? "全对！" : "对了 " + correct + " / " + total + " 词");
+  typingSpeak(v.en);
+}
+function typingReveal() {
+  const a = typingAttempt;
+  const v = currentTypingVerse();
+  if (!a || !v || a.submitted) return;
+  typingSubmit(); // honest score of what was actually typed; untyped = wrong
+  // then fill the untyped slots so the full sentence is readable (they stay red = missed)
+  a.tokens.forEach((t, i) => { if (!a.typed[i]) a.typed[i] = t.disp.replace(/[.,;:!?""''()]/g, ""); });
+  renderTypingSlots();
+  toast("已揭晓答案");
+}
+function typingHint() {
+  const a = typingAttempt;
+  if (!a || a.submitted) return;
+  const t = a.tokens[a.cur];
+  if (!t) return;
+  if (!a.startedAt) a.startedAt = Date.now();
+  a.typed[a.cur] = t.disp.replace(/[.,;:!?""''()]/g, "");
+  if (a.cur < a.tokens.length - 1) a.cur++;
+  else { renderTypingSlots(); typingSubmit(); return; }
+  renderTypingSlots();
+  $("#typing-input").focus();
+}
+function typingNextVerse() {
+  if (!typingSet) return;
+  const a = typingAttempt;
+  if (a && !a.submitted) {
+    const typedCount = a.typed.filter(Boolean).length;
+    if (typedCount === 0) {
+      // skipped without typing anything: no stats, just move on
+      if (typingIdx < typingSet.verses.length - 1) { typingIdx++; showTypingVerse(true); }
+      else renderTypingSummary();
+      return;
+    }
+    typingSubmit(); // score what was typed, stay to see the feedback; next tap advances
+    return;
+  }
+  if (typingIdx < typingSet.verses.length - 1) {
+    typingIdx++;
+    showTypingVerse(true);
+  } else {
+    renderTypingSummary();
+  }
+}
+function renderTypingSummary() {
+  $("#typing-practice").classList.add("hidden");
+  $("#typing-summary").classList.remove("hidden");
+  const s = typingSession || { verses: 0, words: 0, correct: 0, wpmTotal: 0, wpmCount: 0 };
+  const acc = s.words ? Math.round((s.correct / s.words) * 100) : 0;
+  const avgWpm = s.wpmCount ? Math.round(s.wpmTotal / s.wpmCount) : 0;
+  $("#typing-summary-body").innerHTML =
+    `<div class="typing-stat"><b>${s.verses}</b><span>完成节数</span></div>` +
+    `<div class="typing-stat"><b>${s.words}</b><span>总词数</span></div>` +
+    `<div class="typing-stat"><b>${acc}%</b><span>平均正确率</span></div>` +
+    `<div class="typing-stat"><b>${avgWpm || "—"}</b><span>平均 WPM</span></div>` +
+    `<p class="typing-summary-note">${acc === 100 ? "全对，太棒了！" : acc >= 80 ? "很不错，继续保持。" : "多练几遍，错词已收进错词本。"}</p>`;
+}
+function initTyping() {
+  $("#typing-back").addEventListener("click", () => { if ("speechSynthesis" in window) speechSynthesis.cancel(); renderTypingHome(); });
+  $("#typing-speak").addEventListener("click", () => { const v = currentTypingVerse(); if (v) typingSpeak(v.en); });
+  $$("#typing-mode button").forEach((b) => b.addEventListener("click", () => {
+    typingMode = b.dataset.m;
+    $$("#typing-mode button").forEach((x) => x.classList.toggle("active", x.dataset.m === typingMode));
+    renderTypingPrompt();
+    if (typingMode === "listen") { const v = currentTypingVerse(); if (v) typingSpeak(v.en); }
+    $("#typing-input").focus();
+  }));
+  $("#typing-slots").addEventListener("click", (e) => {
+    const slot = e.target.closest(".tslot");
+    const a = typingAttempt;
+    if (slot && a && a.submitted) {
+      const t = a.tokens[parseInt(slot.dataset.i, 10)];
+      if (t) typingSpeak(t.disp);
+      return;
+    }
+    $("#typing-input").focus();
+  });
+  const inp = $("#typing-input");
+  inp.addEventListener("input", () => {
+    const a = typingAttempt;
+    if (!a || a.submitted) return;
+    const val = inp.value;
+    if (val.indexOf(" ") >= 0) {
+      inp.value = val.split(" ")[0];
+      typingCommitCurrent();
+      return;
+    }
+    if (!a.startedAt && val) a.startedAt = Date.now();
+    const cur = a.tokens[a.cur];
+    if (cur) {
+      const slot = $("#typing-slots").querySelector('.tslot[data-i="' + a.cur + '"] .tword');
+      if (slot) slot.textContent = val;
+    }
+  });
+  inp.addEventListener("keydown", (e) => {
+    const a = typingAttempt;
+    if (!a) return;
+    if (e.key === "Backspace" && !inp.value && a.cur > 0 && !a.submitted) {
+      e.preventDefault();
+      a.cur--;
+      inp.value = a.typed[a.cur] || "";
+      a.typed[a.cur] = "";
+      renderTypingSlots();
+      const slot = $("#typing-slots").querySelector('.tslot[data-i="' + a.cur + '"] .tword');
+      if (slot) slot.textContent = inp.value;
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (a.submitted) { typingNextVerse(); return; }
+      if (inp.value.trim()) typingCommitCurrent();
+      else if (a.cur === a.tokens.length - 1 && (a.typed[a.cur] || "")) typingSubmit();
+      else if (a.typed.filter(Boolean).length === a.tokens.length) typingSubmit();
+    }
+  });
+  $("#typing-hint").addEventListener("click", typingHint);
+  $("#typing-reveal").addEventListener("click", typingReveal);
+  $("#typing-next").addEventListener("click", typingNextVerse);
+  $("#typing-again").addEventListener("click", () => { renderTypingHome(); });
+  $("#typing-goread").addEventListener("click", () => {
+    const last = store.get("lastRead", null);
+    location.hash = last ? "#/read/" + last.book + "/" + last.chapter : "#/read/gen/1";
+  });
+  $("#sheet-typing").addEventListener("click", () => {
+    if (!sheetVerse) return;
+    const v = sheetVerse;
+    closeSheet();
+    location.hash = "#/typing?book=" + v.book + "&chapter=" + v.chapter + "&verse=" + v.verse;
+  });
+  $("#btn-typing-chapter").addEventListener("click", () => {
+    location.hash = "#/typing?book=" + current.book + "&chapter=" + current.chapter;
+  });
 }
 
 /* ---------- init ---------- */
@@ -919,19 +1933,28 @@ function init() {
     applySettings();
     toast(settings.theme === "dark" ? "已切换深色主题" : "已切换浅色主题");
   });
-  $("#btn-settings").addEventListener("click", () => openDrawer("#drawer-settings"));
+  $("#btn-settings").addEventListener("click", () => { renderProfiles(); openDrawer("#drawer-settings"); });
   $("#btn-search-top").addEventListener("click", () => { location.hash = "#/search"; });
   // settings
   $$("#seg-font button").forEach((b) => b.addEventListener("click", () => { settings.font = b.dataset.f; applySettings(); renderChapter(current.book, current.chapter); }));
-  $$("#seg-line button").forEach((b) => b.addEventListener("click", () => { settings.line = b.dataset.l; applySettings(); }));
+  $$("#seg-line button").forEach((b) => b.addEventListener("click", () => { settings.line = b.dataset.l; applySettings(); applyPageMode(); }));
+  $$("#seg-reading button").forEach((b) => b.addEventListener("click", () => {
+    settings.readingMode = b.dataset.rm; applySettings();
+    if (readViewVisible()) applyPageMode();
+    toast(settings.readingMode === "page" ? "已切换为翻页阅读" : "已切换为滚动阅读");
+  }));
+  initPageGestures();
   $("#set-versenums").addEventListener("change", (e) => { settings.showNums = e.target.checked; applySettings(); renderChapter(current.book, current.chapter); });
   $("#set-headings").addEventListener("change", (e) => { settings.showHeadings = e.target.checked; applySettings(); renderChapter(current.book, current.chapter); });
   $("#set-poetry").addEventListener("change", (e) => { settings.poetry = e.target.checked; applySettings(); renderChapter(current.book, current.chapter); });
+  $("#set-original").addEventListener("change", (e) => { settings.original = e.target.checked; applySettings(); renderChapter(current.book, current.chapter); });
   // drawers
   $("#drawer-backdrop").addEventListener("click", closeDrawers);
   $("#drawer-close").addEventListener("click", closeDrawers);
   $("#version-close").addEventListener("click", closeDrawers);
   $("#settings-close").addEventListener("click", closeDrawers);
+  $("#lexicon-close").addEventListener("click", closeDrawers);
+  initLexiconDrawer();
   $("#btn-picker").addEventListener("click", () => { renderPicker(); openDrawer("#drawer-picker"); });
   $$("#picker-tabs button").forEach((b) => b.addEventListener("click", () => { pickerTab = b.dataset.t; renderPicker(); }));
   $("#picker-back").addEventListener("click", renderPicker);
@@ -979,6 +2002,14 @@ function init() {
   // backup: export / import my data (bookmarks, highlights, notes, history, settings)
   $("#btn-export").addEventListener("click", exportBackup);
   $("#btn-import").addEventListener("click", () => $("#import-file").click());
+  $("#btn-add-profile").addEventListener("click", () => {
+    const name = prompt("新档案名称（例如：妻子）");
+    if (name === null) return;
+    const id = addProfile(name);
+    if (!id) { toast("请输入档案名称"); return; }
+    renderProfiles();
+    toast("已新增档案「" + name.trim() + "」，点档案名即可切换");
+  });
   $("#import-file").addEventListener("change", (e) => {
     const f = e.target.files[0];
     if (f) importBackup(f);
@@ -994,6 +2025,8 @@ function init() {
     toast(t ? "ESV 密钥已保存" : "ESV 密钥已清除");
     if (settings.version === "esv") renderChapter(current.book, current.chapter);
   });
+  // typing
+  initTyping();
   // search
   $("#search-go").addEventListener("click", () => {
     const q = $("#search-input").value.trim();
@@ -1046,10 +2079,10 @@ function init() {
     closeSheet();
     renderChapter(current.book, current.chapter);
   }));
-  // keyboard: prev/next chapter
+  // keyboard: prev/next chapter (in scroll mode; page mode owns ← → for turning pages)
   document.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowLeft" && !$("#view-read").classList.contains("hidden") && !e.target.matches("input,textarea")) $("#btn-prev").click();
-    if (e.key === "ArrowRight" && !$("#view-read").classList.contains("hidden") && !e.target.matches("input,textarea")) $("#btn-next").click();
+    if (e.key === "ArrowLeft" && !isPageMode() && !$("#view-read").classList.contains("hidden") && !e.target.matches("input,textarea")) $("#btn-prev").click();
+    if (e.key === "ArrowRight" && !isPageMode() && !$("#view-read").classList.contains("hidden") && !e.target.matches("input,textarea")) $("#btn-next").click();
     if (e.key === "Escape") { closeDrawers(); closeSheet(); }
   });
   route();

@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>FlareBible | 在线圣经</title>
-<meta name="description" content="FlareBible 在线阅读圣经：和合本、KJV、当代译本、吕振中、ESV，全文搜索、书签、高亮、笔记、读经计划。">
+<title>Nesive Bible | 在线圣经</title>
+<meta name="description" content="Nesive Bible 在线阅读圣经：和合本、KJV、当代译本、吕振中、ESV，全文搜索、书签、高亮、笔记、读经计划。">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
 <link rel="icon" type="image/png" sizes="64x64" href="favicon.png">
 <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png">
@@ -14,7 +14,7 @@
 <header class="topbar">
   <a class="brand" href="#/" aria-label="首页">
     <span class="brand-mark"><svg viewBox="0 0 64 64" width="22" height="22" aria-hidden="true"><path d="M32 20 C26 15 17 14 10 16 L10 46 C17 44 26 45 32 50 C38 45 47 44 54 46 L54 16 C47 14 38 15 32 20 Z" fill="currentColor"/><path d="M32 20 L32 50 C26 45 17 44 10 46 L10 16 C17 14 26 15 32 20 Z" fill="#000" opacity="0.18"/><g fill="currentColor"><rect x="30" y="4" width="4" height="12" rx="1"/><rect x="26" y="8" width="12" height="4" rx="1"/></g></svg></span>
-    <span class="brand-name">FlareBible</span>
+    <span class="brand-name">Nesive Bible</span>
     <span class="brand-sub">在线圣经</span>
   </a>
   <div class="top-actions">
@@ -65,8 +65,10 @@
         <button class="btn-ghost" id="btn-prev">← 上一章</button>
         <button class="btn-ghost" id="btn-next">下一章 →</button>
       </div>
+      <button class="btn-ghost typing-chapter-btn" id="btn-typing-chapter">练本章 ⌨️ · 打字学英语</button>
       <p class="copyright" id="reader-copyright"></p>
     </article>
+    <div id="page-indicator" class="page-indicator hidden" aria-live="polite"></div>
   </section>
 
   <!-- Verse detail -->
@@ -137,6 +139,46 @@
     </div>
     <div id="plan-list" class="plan-list"></div>
   </section>
+
+  <!-- Typing: learn English through the Bible (earthworm style) -->
+  <section id="view-typing" class="view hidden">
+    <div id="typing-home">
+      <h1>打字学英语</h1>
+      <p class="typing-sub">用圣经学英语 · 每条都有语音，每个单词都有音标</p>
+      <div class="typing-sets" id="typing-sets"></div>
+      <div class="typing-stats" id="typing-stats"></div>
+    </div>
+    <div id="typing-practice" class="hidden">
+      <div class="typing-head">
+        <button class="btn-ghost" id="typing-back">← 返回</button>
+        <span class="typing-ref" id="typing-ref"></span>
+        <button class="icon-btn" id="typing-speak" aria-label="朗读">🔊</button>
+      </div>
+      <div class="seg typing-mode" id="typing-mode">
+        <button data-m="dictation" class="active">默写</button>
+        <button data-m="copy">跟打</button>
+        <button data-m="listen">听写</button>
+      </div>
+      <p class="typing-prompt" id="typing-prompt"></p>
+      <div class="typing-slots" id="typing-slots" role="textbox" aria-label="打字区，点一下开始打字"></div>
+      <div class="typing-actions">
+        <button class="btn-ghost" id="typing-hint">提示</button>
+        <button class="btn-ghost" id="typing-reveal">看答案</button>
+        <button class="btn-primary" id="typing-next">下一节 →</button>
+      </div>
+      <div class="typing-progress"><div id="typing-bar"></div></div>
+      <p class="typing-count" id="typing-count"></p>
+      <input id="typing-input" type="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" aria-label="打字输入">
+    </div>
+    <div id="typing-summary" class="hidden">
+      <h1>本组完成</h1>
+      <div class="typing-summary-card" id="typing-summary-body"></div>
+      <div class="typing-summary-actions">
+        <button class="btn-primary" id="typing-again">再练一组</button>
+        <button class="btn-ghost" id="typing-goread">回阅读</button>
+      </div>
+    </div>
+  </section>
 </main>
 
 <nav class="bottomnav" aria-label="主导航">
@@ -144,6 +186,7 @@
   <a href="#/read" data-nav="read"><span class="nav-ico"><svg viewBox="0 0 64 64" width="20" height="20" aria-hidden="true"><path d="M32 20 C26 15 17 14 10 16 L10 46 C17 44 26 45 32 50 C38 45 47 44 54 46 L54 16 C47 14 38 15 32 20 Z" fill="currentColor"/><path d="M32 20 L32 50 C26 45 17 44 10 46 L10 16 C17 14 26 15 32 20 Z" fill="#000" opacity="0.18"/><g fill="currentColor"><rect x="30" y="4" width="4" height="12" rx="1"/><rect x="26" y="8" width="12" height="4" rx="1"/></g></svg></span><span>圣经</span></a>
   <a href="#/search" data-nav="search"><span class="nav-ico">⌕</span><span>搜索</span></a>
   <a href="#/bookmarks" data-nav="bookmarks"><span class="nav-ico">🔖</span><span>书签</span></a>
+  <a href="#/typing" data-nav="typing"><span class="nav-ico">⌨️</span><span>打字</span></a>
   <a href="#/plan" data-nav="plan"><span class="nav-ico">☰</span><span>计划</span></a>
 </nav>
 
@@ -182,8 +225,44 @@
     <button class="version-item" data-v="lzz">
       <strong>吕振中</strong><span>中文 · 吕振中译本（简体）· 直译原文结构</span>
     </button>
+    <button class="version-item" data-v="wenli">
+      <strong>文理和合本</strong><span>中文 · 文理和合本 1919（文言）· 公有领域</span>
+    </button>
     <button class="version-item" data-v="kjv">
       <strong>King James Version</strong><span>English · KJV（公有领域）</span>
+    </button>
+    <button class="version-item" data-v="asv">
+      <strong>American Standard Version 1901</strong><span>English · ASV 1901（公有领域）</span>
+    </button>
+    <button class="version-item" data-v="web">
+      <strong>World English Bible</strong><span>English · WEB（公有领域）</span>
+    </button>
+    <button class="version-item" data-v="ylt">
+      <strong>Young's Literal Translation 1898</strong><span>English · YLT 1898（公有领域）</span>
+    </button>
+    <button class="version-item" data-v="darby">
+      <strong>Darby Translation 1890</strong><span>English · Darby 1890（公有领域）</span>
+    </button>
+    <button class="version-item" data-v="geneva">
+      <strong>Geneva Bible 1599</strong><span>English · Geneva 1599（公有领域）</span>
+    </button>
+    <button class="version-item" data-v="bbe">
+      <strong>Bible in Basic English</strong><span>English · BBE（美国公有领域）</span>
+    </button>
+    <button class="version-item" data-v="luther1912">
+      <strong>Lutherbibel 1912</strong><span>Deutsch · Luther 1912（公有领域）</span>
+    </button>
+    <button class="version-item" data-v="segond1910">
+      <strong>Louis Segond 1910</strong><span>Français · Segond 1910（公有领域）</span>
+    </button>
+    <button class="version-item" data-v="rv1909">
+      <strong>Reina-Valera 1909</strong><span>Español · RV 1909（公有领域）</span>
+    </button>
+    <button class="version-item" data-v="almeida">
+      <strong>Almeida Revista e Corrigida</strong><span>Português · Almeida ARC（公有领域）</span>
+    </button>
+    <button class="version-item" data-v="staten">
+      <strong>Statenvertaling 1637</strong><span>Nederlands · Statenvertaling 1637（公有领域）</span>
     </button>
     <button class="version-item" data-v="esv">
       <strong>English Standard Version</strong><span>English · ESV · 需免费 API 密钥（Crossway）</span>
@@ -192,7 +271,7 @@
       <strong>对照阅读</strong><span>和合本 + KJV 并排对照</span>
     </button>
   </div>
-  <p class="drawer-note">译本说明：和合本、KJV、吕振中为公有领域；当代译本为 Biblica 开放资源（CC BY-SA 4.0）；ESV 由 Crossway 官方 API 实时提供，需在设置里填入免费密钥，本站不存储 ESV 全文。微读圣经另有新译本、和合本 2010 等版权译本，本站未收录。</p>
+  <p class="drawer-note">译本说明：和合本、KJV、吕振中、文理和合本、ASV、WEB、YLT、Darby、日内瓦圣经、BBE、路德圣经 1912、Segond 1910、Reina-Valera 1909、Almeida ARC、Statenvertaling 1637 均为公有领域；当代译本为 Biblica 开放资源（CC BY-SA 4.0）；ESV 由 Crossway 官方 API 实时提供，需在设置里填入免费密钥，本站不存储 ESV 全文。微读圣经另有新译本、和合本 2010 等版权译本，本站未收录。</p>
 </aside>
 
 <!-- Settings drawer -->
@@ -211,6 +290,14 @@
     </div>
   </div>
   <div class="setting-row">
+    <label>阅读方式</label>
+    <div class="seg" id="seg-reading">
+      <button data-rm="scroll" class="active">滚动</button>
+      <button data-rm="page">翻页</button>
+    </div>
+  </div>
+  <p class="drawer-note">翻页：仿微读圣经，左右滑动或点页面两边翻页，键盘 ← → 也可翻页；章末继续翻进入下一章。</p>
+  <div class="setting-row">
     <label>行距</label>
     <div class="seg" id="seg-line">
       <button data-l="tight">紧凑</button>
@@ -221,6 +308,8 @@
   <label class="setting-check"><input type="checkbox" id="set-versenums" checked> 显示节号</label>
   <label class="setting-check"><input type="checkbox" id="set-headings" checked> 显示段落标题</label>
   <label class="setting-check"><input type="checkbox" id="set-poetry" checked> 诗歌体分行</label>
+  <label class="setting-check"><input type="checkbox" id="set-original"> 原文对照（希伯来文 / 希腊文）</label>
+  <p class="drawer-note">打开后每节下方显示原文逐词（旧约希伯来文、新约希腊文），点任意词查看 Strong's 编号、中文释义与全部出处。原文按 KJV 节号对齐，与和合本节号在少数章节有漂移（如民数记第 1 章）。</p>
   <div class="setting-row">
     <label>复制格式</label>
     <div class="seg" id="seg-copyfmt">
@@ -239,11 +328,25 @@
     </div>
   </div>
   <p class="drawer-note">书签、高亮、笔记与阅读记录保存在本机浏览器。导出备份为 JSON 文件，可在换设备或清数据后导入恢复。</p>
+  <div class="setting-block">
+    <div class="setting-block-head"><span>档案</span><button class="btn-ghost" id="btn-add-profile">＋ 新增档案</button></div>
+    <div id="profile-list"></div>
+  </div>
+  <p class="drawer-note">每个档案的高亮、书签、笔记与阅读记录各自独立，点档案名切换，切换后页面会重新加载。主题、字号等显示设置所有档案共用。导出备份只导出当前档案的数据。</p>
   <div class="setting-row setting-esv">
     <label for="set-esv-token">ESV API 密钥</label>
     <input id="set-esv-token" type="password" placeholder="粘贴 Crossway 免费密钥" autocomplete="off" spellcheck="false">
   </div>
   <p class="drawer-note">ESV 密钥免费获取：到 <a href="https://api.esv.org/" target="_blank" rel="noopener">api.esv.org</a> 注册账号并创建 API 应用，密钥只保存在本机浏览器，不上传。填入后即可在线阅读 ESV。</p>
+</aside>
+
+<!-- Original-language lexicon drawer -->
+<aside class="drawer hidden" id="drawer-lexicon" aria-label="原文词典">
+  <div class="drawer-head">
+    <h2>原文词典</h2>
+    <button class="icon-btn" id="lexicon-close" aria-label="关闭">✕</button>
+  </div>
+  <div id="lex-body"></div>
 </aside>
 
 <!-- Verse action sheet -->
@@ -257,6 +360,7 @@
     <button id="sheet-open">逐节对照</button>
     <button id="sheet-bookmark">书签</button>
     <button id="sheet-note">笔记</button>
+    <button id="sheet-typing">练这节 ⌨️</button>
     <button id="sheet-close">关闭</button>
   </div>
   <div class="sheet-hl">
